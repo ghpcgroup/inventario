@@ -1,4 +1,21 @@
-// Dados iniciais mockados
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDifRpgtFgFWb89TepGrCGHV0w3s3-k6LA",
+    authDomain: "inventario-ghpc-8d260.firebaseapp.com",
+    projectId: "inventario-ghpc-8d260",
+    storageBucket: "inventario-ghpc-8d260.firebasestorage.app",
+    messagingSenderId: "288973271915",
+    appId: "1:288973271915:web:6aa6ccbb3a93dc48a9922e"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Dados iniciais
 let inventario = [];
 
 // Gráficos
@@ -54,6 +71,12 @@ function atualizarGraficos(dados) {
 // Controle de Acesso
 let currentUserRole = null; // 'admin' ou 'user'
 
+// Elementos Login
+const formLogin = document.getElementById('formLogin');
+const loginContainer = document.getElementById('loginContainer');
+const dashboardContainer = document.getElementById('dashboardContainer');
+const loginError = document.getElementById('loginError');
+
 // Inicialização
 document.addEventListener('DOMContentLoaded', () => {
     // Verifica tema salvo
@@ -66,48 +89,82 @@ document.addEventListener('DOMContentLoaded', () => {
     // Ocultar modal config por padrão
     const modalConfig = document.getElementById('modalConfig');
     modalConfig.classList.remove('show');
-
-    // Inicialmente não renderizamos a tabela até o login
 });
 
-// ---------------- LOGIN LOGIC ----------------
-const formLogin = document.getElementById('formLogin');
-const loginContainer = document.getElementById('loginContainer');
-const dashboardContainer = document.getElementById('dashboardContainer');
-const loginError = document.getElementById('loginError');
+// ---------------- LOGIN LOGIC (Firebase Auth) ----------------
 
 formLogin.addEventListener('submit', function(e) {
     e.preventDefault();
-    const user = document.getElementById('username').value.trim();
+    const email = document.getElementById('username').value.trim();
     const pass = document.getElementById('password').value.trim();
 
-    if (user === 'admin' && pass === 'admin') {
-        efetuarLogin('admin');
-    } else if (user === 'user' && pass === 'user') {
-        efetuarLogin('user');
+    // Faz login no Firebase
+    signInWithEmailAndPassword(auth, email, pass)
+        .then((userCredential) => {
+            loginError.style.display = 'none';
+        })
+        .catch((error) => {
+            console.error("Erro no login:", error);
+            loginError.style.display = 'block';
+        });
+});
+
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        // Logado
+        loginContainer.style.display = 'none';
+        dashboardContainer.style.display = 'flex';
+        
+        // Define permissão baseada no e-mail (Ex: emails com 'admin' ganham acesso total)
+        if (user.email && user.email.toLowerCase().includes('admin')) {
+            currentUserRole = 'admin';
+            document.getElementById('btnNovoCadastro').style.display = 'flex';
+        } else {
+            currentUserRole = 'user';
+            document.getElementById('btnNovoCadastro').style.display = 'none';
+        }
+
+        // Limpar formulário de login
+        formLogin.reset();
+        loginError.style.display = 'none';
+
+        // Inicia a busca de dados do Firestore
+        carregarDadosFirestore();
     } else {
-        loginError.style.display = 'block';
+        // Deslogado
+        currentUserRole = null;
+        dashboardContainer.style.display = 'none';
+        loginContainer.style.display = 'flex';
     }
 });
 
-function efetuarLogin(role) {
-    currentUserRole = role;
-    loginContainer.style.display = 'none';
-    dashboardContainer.style.display = 'flex';
-    
-    // Configurar a interface baseada na permissão
-    if (role === 'user') {
-        document.getElementById('btnNovoCadastro').style.display = 'none';
-    } else {
-        document.getElementById('btnNovoCadastro').style.display = 'flex';
+document.getElementById('btnSair').addEventListener('click', (e) => {
+    e.preventDefault();
+    if(confirm('Tem certeza que deseja sair do sistema?')) {
+        signOut(auth).then(() => {
+            if (window.innerWidth <= 768) {
+                sidebar.classList.remove('open');
+                sidebarOverlay.classList.remove('show');
+            }
+        });
     }
+});
 
-    // Limpar formulário de login
-    formLogin.reset();
-    loginError.style.display = 'none';
+// ---------------- DATABASE LOGIC (Firestore) ----------------
 
-    renderizarTabela(inventario);
-    atualizarGraficos(inventario);
+function carregarDadosFirestore() {
+    const equipamentosRef = collection(db, 'equipamentos');
+    
+    // onSnapshot atualiza os dados em tempo real sempre que algo mudar no banco
+    onSnapshot(equipamentosRef, (snapshot) => {
+        inventario = [];
+        snapshot.forEach((doc) => {
+            inventario.push({ id: doc.id, ...doc.data() });
+        });
+        renderizarComFiltros();
+    }, (error) => {
+        console.error("Erro ao buscar dados do Firestore:", error);
+    });
 }
 
 // ---------------- THEME LOGIC ----------------
@@ -126,16 +183,6 @@ themeToggle.addEventListener('change', function() {
 const modalConfig = document.getElementById('modalConfig');
 const closeConfig = document.getElementById('closeConfig');
 
-// ---------------- EXPORT / PRINT LOGIC ----------------
-document.getElementById('btnExportarPdf').addEventListener('click', () => {
-    const dataAtual = new Date().toLocaleString('pt-BR');
-    const printDateEl = document.getElementById('printDate');
-    if (printDateEl) {
-        printDateEl.textContent = `Gerado em: ${dataAtual}`;
-    }
-    window.print();
-});
-
 document.getElementById('btnConfig').addEventListener('click', (e) => {
     e.preventDefault();
     modalConfig.classList.add('show');
@@ -147,6 +194,17 @@ document.getElementById('btnConfig').addEventListener('click', (e) => {
 closeConfig.addEventListener('click', () => {
     modalConfig.classList.remove('show');
 });
+
+// ---------------- EXPORT / PRINT LOGIC ----------------
+document.getElementById('btnExportarPdf').addEventListener('click', () => {
+    const dataAtual = new Date().toLocaleString('pt-BR');
+    const printDateEl = document.getElementById('printDate');
+    if (printDateEl) {
+        printDateEl.textContent = `Gerado em: ${dataAtual}`;
+    }
+    window.print();
+});
+
 
 // ---------------- INVENTORY LOGIC ----------------
 
@@ -225,9 +283,10 @@ function renderizarTabela(dados) {
 
         let actionButtons = '';
         if (currentUserRole === 'admin') {
+            // Firebase IDs são strings, por isso ficam entre aspas simples '${item.id}'
             actionButtons = `
-                <button class="action-btn edit" title="Editar" onclick="editarEquipamento(${item.id})"><i class="fa-solid fa-pen-to-square"></i></button>
-                <button class="action-btn delete" title="Excluir" onclick="excluirEquipamento(${item.id})"><i class="fa-solid fa-trash"></i></button>
+                <button class="action-btn edit" title="Editar" onclick="editarEquipamento('${item.id}')"><i class="fa-solid fa-pen-to-square"></i></button>
+                <button class="action-btn delete" title="Excluir" onclick="excluirEquipamento('${item.id}')"><i class="fa-solid fa-trash"></i></button>
             `;
         } else {
             actionButtons = `<span style="font-size: 12px; color: var(--text-muted);"><i class="fa-solid fa-lock"></i> Somente Leitura</span>`;
@@ -372,8 +431,12 @@ closeSidebar.addEventListener('click', toggleSidebar);
 sidebarOverlay.addEventListener('click', toggleSidebar);
 
 // Cadastrar / Editar Equipamento
-formCadastro.addEventListener('submit', function(e) {
+formCadastro.addEventListener('submit', async function(e) {
     e.preventDefault();
+
+    const btnSalvar = document.getElementById('btnSalvar');
+    btnSalvar.disabled = true; // Previne multiplos cliques
+    btnSalvar.textContent = "Salvando...";
 
     const idInput = document.getElementById('equipId').value;
     const tipoValor = document.getElementById('tipoEquip').value;
@@ -394,35 +457,40 @@ formCadastro.addEventListener('submit', function(e) {
         observacoes: document.getElementById('observacoes').value.trim()
     };
 
-    if (idInput) {
-        // Modo Edição
-        equipamento.id = parseInt(idInput);
-        const index = inventario.findIndex(item => item.id === equipamento.id);
-        if (index !== -1) {
-            inventario[index] = equipamento;
+    try {
+        if (idInput) {
+            // Edita no Firestore
+            const docRef = doc(db, 'equipamentos', idInput);
+            await updateDoc(docRef, equipamento);
+        } else {
+            // Cadastra no Firestore
+            const equipamentosRef = collection(db, 'equipamentos');
+            await addDoc(equipamentosRef, equipamento);
         }
-    } else {
-        // Modo Cadastro
-        equipamento.id = Date.now();
-        inventario.push(equipamento);
+        toggleModal();
+    } catch (error) {
+        console.error("Erro ao salvar equipamento:", error);
+        alert("Falha ao salvar. Verifique o console.");
+    } finally {
+        btnSalvar.disabled = false;
+        btnSalvar.textContent = "Salvar Equipamento";
     }
-
-    renderizarTabela(inventario);
-    atualizarGraficos(inventario);
-    toggleModal();
 });
 
-// Excluir Equipamento
-function excluirEquipamento(id) {
+// Excluir Equipamento (Adicionado em window para acessar do HTML)
+window.excluirEquipamento = async function(id) {
     if(confirm('Tem certeza que deseja excluir este equipamento?')) {
-        inventario = inventario.filter(item => item.id !== id);
-        renderizarTabela(inventario);
-        atualizarGraficos(inventario);
+        try {
+            await deleteDoc(doc(db, 'equipamentos', id));
+        } catch (error) {
+            console.error("Erro ao excluir equipamento:", error);
+            alert("Erro ao excluir.");
+        }
     }
 }
 
-// Editar Equipamento
-function editarEquipamento(id) {
+// Editar Equipamento (Adicionado em window para acessar do HTML)
+window.editarEquipamento = function(id) {
     const equip = inventario.find(item => item.id === id);
     if (equip) {
         document.getElementById('equipId').value = equip.id;
@@ -452,10 +520,10 @@ function editarEquipamento(id) {
 filtroTipo.addEventListener('change', function() {
     const tipo = this.value;
     if (tipo === 'Todos') {
-        renderizarTabela(inventario);
+        renderizarComFiltros();
     } else {
-        const filtrados = inventario.filter(item => item.tipo === tipo);
-        renderizarTabela(filtrados);
+        currentFiltroTipo = tipo;
+        renderizarComFiltros();
     }
 });
 
@@ -547,7 +615,8 @@ const modalEtiqueta = document.getElementById('modalEtiqueta');
 const closeEtiqueta = document.getElementById('closeEtiqueta');
 let qrcodeInstance = null;
 
-function abrirModalEtiqueta(patrimonio, modelo) {
+// Exposto em window para HTML
+window.abrirModalEtiqueta = function(patrimonio, modelo) {
     document.getElementById('etiquetaPatrimonio').textContent = patrimonio;
     document.getElementById('etiquetaModelo').textContent = modelo;
     
@@ -570,7 +639,8 @@ closeEtiqueta.addEventListener('click', () => {
     modalEtiqueta.classList.remove('show');
 });
 
-function imprimirEtiqueta() {
+// Exposto em window para HTML
+window.imprimirEtiqueta = function() {
     const printArea = document.getElementById('printEtiquetaArea').innerHTML;
     const originalBody = document.body.innerHTML;
     
@@ -586,17 +656,3 @@ function imprimirEtiqueta() {
     document.body.innerHTML = originalBody;
     location.reload(); // Recarrega para restaurar eventos do JS perdidos ao sobrescrever body
 }
-
-document.getElementById('btnSair').addEventListener('click', (e) => {
-    e.preventDefault();
-    if(confirm('Tem certeza que deseja sair do sistema?')) {
-        currentUserRole = null;
-        dashboardContainer.style.display = 'none';
-        loginContainer.style.display = 'flex';
-        // Limpar dados ou reiniciar estado
-        if (window.innerWidth <= 768) {
-            sidebar.classList.remove('open');
-            sidebarOverlay.classList.remove('show');
-        }
-    }
-});
